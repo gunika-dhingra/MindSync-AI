@@ -41,8 +41,14 @@ def mock_busy(day: date) -> List[Slot]:
     s2 = datetime.combine(day, time(14, 0));  e2 = s2 + timedelta(minutes=60)
     return [(s1, e1), (s2, e2)]
 
+from datetime import datetime, timedelta
 
-# ----------------------- Slot / Grid Utilities -----------------------
+def _clamp_to_workday(dt: datetime, day: datetime, start_h: int, end_h: int) -> datetime:
+    """Clamp any datetime to fall within the workday boundaries."""
+    start = dt.replace(hour=start_h, minute=0, second=0, microsecond=0)
+    end   = dt.replace(hour=end_h, minute=0, second=0, microsecond=0)
+    return max(min(dt, end), start)
+
 
 def _workday_slots(day: date, start_h=9, end_h=18, step_min=15) -> List[Slot]:
     start = datetime.combine(day, time(start_h, 0))
@@ -120,7 +126,7 @@ def _merge_adjacent(plan: DayPlan) -> DayPlan:
 
 
 
-
+# --- replace your greedy_schedule with this version ---
 def greedy_schedule(
     tasks: List[Task],
     day: date,
@@ -132,21 +138,17 @@ def greedy_schedule(
     step_min: int = 15,
 ) -> DayPlan:
     """
-    Greedy packer with support for fixed-time tasks.
-
-    Steps:
-      1) Reserve fixed-time tasks first (fixed_start/fixed_end).
-      2) Score remaining free slots against the energy curve.
-         - high effort → chase peaks
-         - low effort  → prefer dips (inverse score)
-         - medium      → mild preference for energy
-      3) Place tasks in contiguous chunks (30–60m) until done or grid full.
-      4) Merge adjacent blocks of the same task.
+    Greedy packer with:
+      • fixed-time reservations,
+      • work-hours clamp,
+      • same-day deadline guard (no chunk ends after deadline),
+      • mild energy-aware scoring (high→peaks, low→dips),
+      • contiguous chunk packing + merge.
     """
     curve = energy_curve or mock_energy_curve(day)
     busy_list = busy or mock_busy(day)
 
-   
+    # Build the workday grid and available slots
     all_work_slots = _workday_slots(day, start_h=work_start_h, end_h=work_end_h, step_min=step_min)
     free = [s for s in all_work_slots if not any(_overlaps(s, b) for b in busy_list)]
     scores = _slot_scores(free, curve)
@@ -154,19 +156,16 @@ def greedy_schedule(
     plan = DayPlan(date=day, blocks=[])
     used: set[Slot] = set()
 
-    
+    # --- 1) Split fixed vs flexible ---
     fixed, flexible = [], []
     for t in tasks:
         fs = getattr(t, "fixed_start", None)
         fe = getattr(t, "fixed_end", None)
         if fs or fe:
-            
             if fs and not fe:
                 fe = fs + timedelta(minutes=int(max(15, t.est_minutes)))
-            
             fs = _snap_down_15(fs) if fs else None
             fe = _snap_up_15(fe) if fe else None
-            
             try:
                 t.fixed_start, t.fixed_end = fs, fe  
             except Exception:
@@ -178,86 +177,100 @@ def greedy_schedule(
     for t, fs, fe in fixed:
         if not fs or not fe:
             continue
-    
         if fs.date() != day:
             continue
+        fs = _clamp_to_workday(fs, day, work_start_h, work_end_h)
+        fe = _clamp_to_workday(fe, day, work_start_h, work_end_h)
+        if fe <= fs:
+            continue
+
         minutes = int((fe - fs).total_seconds() // 60)
         needed = _contiguous_slots(fs, minutes)
         for ns in needed:
             used.add(ns)
         plan.blocks.append(Block(task_title=t.title, start=fs, end=fe))
 
-
-  
+   
     free = [s for s in free if s not in used]
     if not free and len(plan.blocks) == 0:
-        return plan  
+        return plan
+
+    
     def task_key(t: Task):
-        eff_rank = {"high": 0, "medium": 1, "low": 2}.get((t.effort or "medium").lower(), 1)
         d = t.deadline or datetime.combine(day, time(23, 59))
-        return (eff_rank, d)
+        eff_rank = {"high": 0, "medium": 1, "low": 2}.get((t.effort or "medium").lower(), 1)
+        return (d, eff_rank)
 
     tasks_sorted = sorted(flexible, key=task_key)
 
     def score_for_task(slot: Slot, effort: Optional[str]) -> float:
         e = scores.get(slot, 0.5)
+        h = slot[0].hour
         eff = (effort or "medium").lower()
         if eff == "high":
-            return e                 
+            return e  
         if eff == "low":
-            return 1.0 - e           
-        return 0.5 + 0.5 * e         
+           
+            early_penalty = 0.2 if h < max(work_start_h + 1, 9) else 0.0
+            return (1.0 - e) - early_penalty
+        return 0.5 + 0.5 * e 
 
-    
-    free_sorted_cache = None
 
     for t in tasks_sorted:
         remaining = max(15, int(t.est_minutes))
         chunk = _chunk_minutes_for_effort(t.effort)
 
-   
+        
+        latest_end: Optional[datetime] = None
+        if t.deadline and t.deadline.date() == day:
+            latest_end = t.deadline
         free_sorted = sorted(free, key=lambda x: -score_for_task(x, t.effort))
-        if free_sorted_cache is None:
-            free_sorted_cache = free_sorted  
 
         while remaining > 0:
             placed_any = False
+
             for s in free_sorted:
                 if s in used:
                     continue
 
-                
                 minutes = min(chunk, remaining)
                 if minutes < 30 and remaining >= 30:
                     minutes = 30
 
-             
                 start = s[0]
+                end = start + timedelta(minutes=minutes)
+
+                
+                start = _clamp_to_workday(start, day, work_start_h, work_end_h)
+                end = _clamp_to_workday(end, day, work_start_h, work_end_h)
+                if end <= start:
+                    continue
+                if latest_end and end > latest_end:
+                    continue
+
                 needed = _contiguous_slots(start, minutes)
-                if all(ns in free and ns not in used for ns in needed):
-                    for ns in needed:
-                        used.add(ns)
-                    plan.blocks.append(Block(task_title=t.title, start=start, end=start + timedelta(minutes=minutes)))
-                    remaining -= minutes
-                    placed_any = True
-                    break  
+                if not all(ns in free and ns not in used for ns in needed):
+                    continue
+
+    
+                for ns in needed:
+                    used.add(ns)
+                plan.blocks.append(Block(task_title=t.title, start=start, end=end))
+                remaining -= minutes
+                placed_any = True
+                break  
 
             if not placed_any:
-                
-                break
+                break  
+
 
     plan.blocks.sort(key=lambda b: b.start)
     _merge_adjacent(plan)
     return plan
 
 
-
-
 def energy_alignment(plan: DayPlan) -> float:
-    """
-    Percent of scheduled minutes that fall in high-energy windows (>= 0.75).
-    Returns a value in [0,1], rounded to 2 decimals.
-    """
+    
     if not plan.blocks:
         return 0.0
     curve = dict(mock_energy_curve(plan.date))
@@ -272,3 +285,4 @@ def energy_alignment(plan: DayPlan) -> float:
                 hi += 15
             t += timedelta(minutes=15)
     return 0.0 if total == 0 else round(hi / total, 2)
+

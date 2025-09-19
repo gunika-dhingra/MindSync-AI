@@ -10,7 +10,7 @@ _GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 _CLASSIFIER_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You are a cognitive effort classifier for tasks.\n"
-     "Return one of low|medium|high and a confidence 0–1.\n"  # <-- fixed: no braces
+     "Return one of low|medium|high and a confidence 0–1.\n"  
      "Guidelines:\n"
      "- Deep work (reports, coding, analysis, research, design) → high.\n"
      "- Meetings, reviews, writing short notes → medium.\n"
@@ -42,7 +42,6 @@ def classify_effort(task: Task) -> Task:
     elif "medium" in text:
         effort, conf = "medium", 0.7
 
-    # simple keyword nudges
     hi_kw = ["report", "analysis", "prototype", "research", "design", "study"]
     if any(k in (task.title + " " + (task.notes or "")).lower() for k in hi_kw):
         effort, conf = "high", max(conf, 0.85)

@@ -1,63 +1,152 @@
-
+# api.py
 from __future__ import annotations
+
 import os
-import sys
+from datetime import date, datetime
+from typing import List, Optional, Literal
+
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, ValidationError
+
+# Load .env early so LLM clients see GOOGLE_API_KEY, etc.
 load_dotenv()
 
-import os, sys
-from datetime import datetime
+# ---- Project imports (your existing modules) ----
+from agents.parser import parse_task
+from agents.classifier import classify_effort
+from agents.scheduler import greedy_schedule
+from agents.summarizer import summarize
+from core.models import Task, DayPlan, DailySummary
+from core.energy import energy_curve_for
+from core.quiz import infer_profile
 
-from graph.plan_graph import run_once
+# ------------------- FastAPI app -------------------
+app = FastAPI(
+    title="MindSync Planner API",
+    version="1.1.0",
+    description="Parse → classify → schedule → summarize tasks, with energy profiles.",
+)
 
-HR = "-" * 60
+ALLOWED_ORIGINS = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000"
+).split(",")
 
-def main():
-    tasks: list[str] = []
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    if len(sys.argv) > 1:
-        
-        tasks = sys.argv[1:]
-    else:
-        print("Enter tasks one per line (empty line to finish):")
-        while True:
-            line = input("> ").strip()
-            if not line:
-                break
-            tasks.append(line)
+# ------------------- Schemas -------------------
+EnergyProfile = Literal["morning_lark", "balanced", "night_owl"]
 
-    if not tasks:
-        tasks = [
-            "Write monthly report for client; due Fri 5pm; ~2h; include Q3 charts",
-            "Email Alice about budget; 15m; today 4:30pm",
-            "Prepare slides for Monday meeting; ~1h"
-        ]
+class PlanRequest(BaseModel):
+    tasks: List[str] = Field(..., description="Task lines like 'Finish report; ~2h; due Fri 5pm'")
+    day: Optional[str] = Field(None, description="YYYY-MM-DD (defaults to today)")
+    profile: Optional[EnergyProfile] = Field("balanced", description="Energy profile to bias scheduling")
 
+class PlanResponse(BaseModel):
+    plan: DayPlan
+    summary: DailySummary
+    profile: EnergyProfile
 
-    from agents.parser import parse_task
-    from agents.classifier import classify_effort
-    task_objs = [classify_effort(parse_task(t)) for t in tasks]
+class ParseRequest(BaseModel):
+    text: str
 
+class ParseResponse(BaseModel):
+    task: Task
 
-    from datetime import date
-    from agents.scheduler import greedy_schedule
-    plan = greedy_schedule(task_objs, date.today())
-    
-    from agents.summarizer import summarize
-    done = {b.task_title for b in plan.blocks if b.start.hour < 12}  
-    summary = summarize(plan, completed_titles=list(done))
+class ClassifyRequest(BaseModel):
+    title: str
+    notes: Optional[str] = None
+    est_minutes: Optional[int] = 30
 
-    print("\n--- Day Plan ---")
-    for b in plan.blocks:
-        print(f"{b.start:%H:%M}-{b.end:%H:%M} {b.task_title}")
+class QuizAnswers(BaseModel):
+    # keep these flexible; frontend can send strings or numbers
+    wake_time: str | int
+    peak_block_start: str | int
+    night_alert: int            # 0..5
+    post_lunch_slump: int       # 0..5
+    ideal_meeting_time: str | int
 
-    print("\n--- Daily Summary ---")
-    print(summary.model_dump_json(indent=2))
+class QuizResult(BaseModel):
+    profile: EnergyProfile
+    confidence: float
+    rationale: str
 
-if __name__ == "__main__":
-    print("🚀 entering main()")
+# ------------------- Routes -------------------
+@app.get("/health")
+def health():
+    return {"ok": True, "time": datetime.utcnow().isoformat() + "Z"}
+
+@app.post("/profile/quiz", response_model=QuizResult)
+def profile_quiz(answers: QuizAnswers):
+    profile, conf, why = infer_profile(answers.model_dump())
+    return {"profile": profile, "confidence": conf, "rationale": why}
+
+@app.post("/parse", response_model=ParseResponse)
+def parse_endpoint(body: ParseRequest):
     try:
-        main()
-        print("🏁 main() returned")
+        t = parse_task(body.text)
+        return {"task": t}
     except Exception as e:
-        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=422, detail=f"parse error: {e}")
+
+@app.post("/classify", response_model=ParseResponse)
+def classify_endpoint(body: ClassifyRequest):
+    try:
+        t = Task(title=body.title, est_minutes=body.est_minutes or 30, notes=body.notes)
+        t = classify_effort(t)
+        return {"task": t}
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"classify error: {e}")
+
+@app.post("/plan", response_model=PlanResponse)
+def plan_endpoint(body: PlanRequest):
+    """
+    End-to-end:
+      1) parse + classify tasks
+      2) generate energy curve for requested day/profile
+      3) schedule + summarize
+    """
+    try:
+        if not body.tasks:
+            raise HTTPException(status_code=400, detail="tasks[] cannot be empty")
+
+        # choose the plan date
+        plan_day = date.today()
+        if body.day:
+            try:
+                plan_day = date.fromisoformat(body.day)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="day must be YYYY-MM-DD")
+
+        # parse + classify all tasks
+        parsed: List[Task] = []
+        for line in body.tasks:
+            t = parse_task(line)
+            t = classify_effort(t)
+            parsed.append(t)
+
+        # energy curve per request
+        profile: EnergyProfile = (body.profile or "balanced")  # type: ignore[assignment]
+        curve = energy_curve_for(plan_day, profile)
+
+        # schedule
+        day_plan = greedy_schedule(parsed, plan_day, energy_curve=curve)
+
+        
+        daily_summary = summarize(day_plan, completed_titles=[])
+
+        return {"plan": day_plan, "summary": daily_summary, "profile": profile}
+    except HTTPException:
+        raise
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"planning error: {e}")
