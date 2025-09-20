@@ -203,3 +203,188 @@ def plan_endpoint(body: PlanRequest):
         raise HTTPException(status_code=422, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"planning error: {e}")
+
+
+# ---- Feedback endpoint for schedule refinement ----
+class FeedbackRequest(BaseModel):
+    userMessage: str = Field(..., description="User's feedback message")
+    currentSchedule: dict = Field(..., description="Current schedule data")
+    currentProfile: str = Field(..., description="Current energy profile")
+    previousMessages: List[dict] = Field(default=[], description="Previous conversation messages")
+
+class FeedbackResponse(BaseModel):
+    response: str = Field(..., description="AI response to user feedback")
+    hasUpdates: bool = Field(default=False, description="Whether schedule/profile updates are suggested")
+    updatedSchedule: Optional[dict] = Field(None, description="Updated schedule if applicable")
+    updatedProfile: Optional[str] = Field(None, description="Updated energy profile if applicable")
+    suggestions: List[str] = Field(default=[], description="Improvement suggestions")
+
+@app.post("/feedback", response_model=FeedbackResponse)
+def feedback_endpoint(body: FeedbackRequest):
+    """
+    Process user feedback about their schedule and suggest improvements.
+    """
+    try:
+        logger.info(f"🔄 [FEEDBACK] Processing feedback for {body.currentProfile} profile")
+        logger.info(f"💬 User message: {body.userMessage[:100]}...")
+
+        # Analyze the feedback using AI
+        feedback_analysis = analyze_feedback(
+            user_message=body.userMessage,
+            current_schedule=body.currentSchedule,
+            current_profile=body.currentProfile,
+            conversation_history=body.previousMessages
+        )
+
+        logger.info(f"🤖 Generated response: {feedback_analysis['response'][:100]}...")
+        
+        return feedback_analysis
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Feedback processing error: {e}")
+        raise HTTPException(status_code=500, detail=f"feedback processing error: {e}")
+
+
+def analyze_feedback(user_message: str, current_schedule: dict, current_profile: str, conversation_history: List[dict]) -> dict:
+    """
+    Analyze user feedback and generate appropriate responses and updates.
+    """
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.prompts import ChatPromptTemplate
+    from core.config import MODEL
+    import os
+    
+    # Initialize the LLM
+    llm = ChatGoogleGenerativeAI(
+        model=MODEL,
+        temperature=0.7,
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+    )
+    
+    # Create prompt template
+    feedback_prompt = ChatPromptTemplate.from_messages([
+        ("system", 
+         "You are an AI assistant helping users refine their daily schedules based on their feedback. "
+         "Provide helpful, empathetic responses and actionable suggestions. "
+         "Keep responses concise but actionable."),
+        ("human", """
+Current Energy Profile: {current_profile}
+Current Schedule: {current_schedule}
+
+User Feedback: "{user_message}"
+
+Previous Conversation: {conversation_history}
+
+Analyze the user's feedback and provide:
+1. A helpful, empathetic response acknowledging their feedback
+2. Specific suggestions for improvement
+3. Whether the schedule or energy profile should be updated
+
+Respond in a conversational, helpful tone. If the user mentions tasks being too hard/easy, timing issues, or wanting to add/remove tasks, be specific about how to address these concerns.
+""")
+    ])
+
+    try:
+        # Generate AI response
+        response = llm.invoke(
+            feedback_prompt.format_messages(
+                current_profile=current_profile,
+                current_schedule=json.dumps(current_schedule, indent=2) if current_schedule else 'No schedule provided',
+                user_message=user_message,
+                conversation_history=json.dumps(conversation_history[-3:], indent=2) if conversation_history else 'No previous messages'
+            )
+        )
+        
+        ai_response = response.content or "I understand your feedback. Let me help you adjust your schedule."
+        
+        # Simple pattern matching to determine if updates are needed
+        user_lower = user_message.lower()
+        has_updates = any(keyword in user_lower for keyword in [
+            'too hard', 'too easy', 'difficult', 'simple', 'add', 'remove', 
+            'change time', 'reschedule', 'earlier', 'later', 'wrong time',
+            'busy', 'stressed', 'stretch', 'breaks', 'more time'
+        ])
+        
+        # Generate suggestions based on feedback content
+        suggestions = generate_suggestions(user_message, current_profile)
+        
+        return {
+            "response": ai_response or "Thank you for your feedback! I'm here to help you improve your schedule.",
+            "hasUpdates": has_updates,
+            "updatedSchedule": None,  # Would need more complex logic to generate actual updates
+            "updatedProfile": None,   # Could adjust profile based on feedback patterns
+            "suggestions": suggestions
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ AI analysis error: {e}")
+        # Fallback to simple pattern matching
+        return generate_fallback_feedback_response(user_message)
+
+
+def generate_suggestions(user_message: str, current_profile: str) -> List[str]:
+    """Generate contextual suggestions based on user feedback."""
+    suggestions = []
+    user_lower = user_message.lower()
+    
+    if 'too hard' in user_lower or 'difficult' in user_lower:
+        suggestions.extend([
+            "Break complex tasks into smaller, manageable subtasks",
+            "Schedule challenging tasks during your peak energy times",
+            "Add more breaks between difficult tasks"
+        ])
+    
+    if 'too easy' in user_lower or 'boring' in user_lower:
+        suggestions.extend([
+            "Add more challenging variations to simple tasks",
+            "Combine related tasks for more complexity",
+            "Consider adding stretch goals or bonus objectives"
+        ])
+    
+    if 'time' in user_lower or 'schedule' in user_lower:
+        suggestions.extend([
+            "Adjust task timing based on your energy patterns",
+            "Experiment with different time blocks",
+            "Consider your natural productivity rhythms"
+        ])
+    
+    if 'add' in user_lower:
+        suggestions.extend([
+            "Identify gaps in your schedule for new tasks",
+            "Group similar tasks together for efficiency",
+            "Balance work tasks with personal activities"
+        ])
+    
+    # Default suggestions if none match
+    if not suggestions:
+        suggestions = [
+            "Review your energy levels throughout the day",
+            "Adjust task difficulty to match your capabilities",
+            "Fine-tune timing based on your productivity patterns"
+        ]
+    
+    return suggestions[:3]  # Return max 3 suggestions
+
+
+def generate_fallback_feedback_response(user_message: str) -> dict:
+    """Fallback response generation when AI is unavailable."""
+    user_lower = user_message.lower()
+    
+    if 'too hard' in user_lower:
+        response = "I understand some tasks felt too challenging. Let's work on breaking them down into smaller, more manageable pieces or scheduling them during your peak energy times."
+    elif 'too easy' in user_lower:
+        response = "It sounds like you're ready for more challenge! We can add complexity to existing tasks or introduce new, more engaging activities."
+    elif 'time' in user_lower:
+        response = "Timing is crucial for productivity. Let's adjust your schedule to better match your natural energy rhythms and preferences."
+    else:
+        response = "Thank you for your feedback! I'm here to help you refine your schedule. Could you tell me more specifically what you'd like to improve?"
+    
+    return {
+        "response": response,
+        "hasUpdates": True,
+        "updatedSchedule": None,
+        "updatedProfile": None,
+        "suggestions": generate_suggestions(user_message, "balanced")
+    }

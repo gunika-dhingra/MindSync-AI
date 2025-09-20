@@ -6,6 +6,88 @@
 
 set -e  # Exit on any error
 
+# Global variables for API keys
+GEMINI_API_KEY=""
+CLERK_PUBLISHABLE_KEY=""
+CLERK_SECRET_KEY=""
+
+# Show help information
+show_help() {
+    echo "🚀 MindSync AI - Enhanced Startup Script"
+    echo "========================================"
+    echo ""
+    echo "DESCRIPTION:"
+    echo "  This script sets up and starts the MindSync AI application with automatic"
+    echo "  dependency installation and environment configuration."
+    echo ""
+    echo "USAGE:"
+    echo "  ./start-enhanced.sh [OPTIONS]"
+    echo ""
+    echo "OPTIONS:"
+    echo "  --help, -h         Show this help message"
+    echo "  --interactive, -i  Run in interactive mode (prompts for API keys)"
+    echo ""
+    echo "REQUIRED API KEYS:"
+    echo "  This script will automatically configure the following API keys for you:"
+    echo ""
+    echo "  📡 GEMINI API KEY"
+    echo "     • Get from: https://aistudio.google.com/app/apikey"
+    echo "     • ⚠️  IMPORTANT: Use a PERSONAL Gmail account, NOT your ASU email!"
+    echo "     • Required for AI-powered task planning and scheduling"
+    echo ""
+    echo "  🔐 CLERK API KEYS (Authentication)"
+    echo "     • Get from: https://clerk.com (create free account)"
+    echo "     • ⚠️  IMPORTANT: Use a PERSONAL email account, NOT your ASU email!"
+    echo "     • Required for user authentication and sign-in/sign-up"
+    echo "     • You'll need both Publishable Key and Secret Key"
+    echo ""
+    echo "WHAT THIS SCRIPT DOES:"
+    echo "  ✅ Detects your operating system (Linux/macOS/Windows)"
+    echo "  ✅ Installs missing dependencies (Git, Python, Node.js, npm, pip)"
+    echo "  ✅ Prompts for and securely stores your API keys"
+    echo "  ✅ Automatically configures backend/.env and frontend/.env.local files"
+    echo "  ✅ Installs Python and Node.js dependencies"
+    echo "  ✅ Starts both backend (FastAPI) and frontend (Next.js) servers"
+    echo ""
+    echo "AFTER SETUP:"
+    echo "  🌐 Frontend will be available at: http://localhost:3000"
+    echo "  🔧 Backend API will be available at: http://localhost:8000"
+    echo "  📖 API Documentation: http://localhost:8000/docs"
+    echo ""
+    echo "EXAMPLES:"
+    echo "  ./start-enhanced.sh --help        # Show this help"
+    echo "  ./start-enhanced.sh --interactive # Run with API key prompts"
+    echo "  ./start-enhanced.sh               # Run with API key prompts (default)"
+    echo ""
+    echo "TROUBLESHOOTING:"
+    echo "  • If you get permission errors, ensure the script is executable:"
+    echo "    chmod +x start-enhanced.sh"
+    echo "  • For Windows users, use Git Bash or WSL"
+    echo "  • Make sure you have internet connection for dependency downloads"
+    echo ""
+    exit 0
+}
+
+# Parse command line arguments
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --help|-h)
+                show_help
+                ;;
+            --interactive|-i)
+                # Interactive mode is now default, but keep for compatibility
+                shift
+                ;;
+            *)
+                echo "❌ Unknown option: $1"
+                echo "Use --help to see available options"
+                exit 1
+                ;;
+        esac
+    done
+}
+
 echo "🚀 Starting MindSync AI - Enhanced Setup..."
 echo "============================================"
 
@@ -17,6 +99,277 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Function to securely collect API keys
+collect_api_keys() {
+    echo ""
+    echo -e "${PURPLE}🔑 API Key Configuration${NC}"
+    echo -e "${PURPLE}========================${NC}"
+    echo ""
+    echo -e "${YELLOW}⚠️  IMPORTANT: Use PERSONAL email accounts, NOT ASU email accounts!${NC}"
+    echo ""
+    
+    # Collect Gemini API Key
+    echo -e "${BLUE}📡 Gemini API Key Setup${NC}"
+    echo -e "${CYAN}   This is required for AI-powered task planning and scheduling.${NC}"
+    echo -e "${CYAN}   Get your API key from: https://aistudio.google.com/app/apikey${NC}"
+    echo -e "${YELLOW}   ⚠️  Must use a PERSONAL Gmail account (not ASU email)${NC}"
+    echo ""
+    while [[ -z "$GEMINI_API_KEY" ]]; do
+        read -p "Enter your Gemini API Key: " GEMINI_API_KEY
+        if [[ -z "$GEMINI_API_KEY" ]]; then
+            echo -e "${RED}❌ Gemini API Key cannot be empty. Please try again.${NC}"
+        elif [[ ${#GEMINI_API_KEY} -lt 30 ]]; then
+            echo -e "${RED}❌ API Key seems too short. Please check and try again.${NC}"
+            GEMINI_API_KEY=""
+        else
+            echo -e "${GREEN}✅ Gemini API Key received${NC}"
+        fi
+    done
+    
+    echo ""
+    echo -e "${BLUE}🔐 Clerk Authentication Setup${NC}"
+    echo -e "${CYAN}   This is required for user authentication (sign-in/sign-up).${NC}"
+    echo -e "${CYAN}   Get your keys from: https://clerk.com (create free account)${NC}"
+    echo -e "${YELLOW}   ⚠️  Must use a PERSONAL email account (not ASU email)${NC}"
+    echo ""
+    
+    # Collect Clerk Publishable Key
+    while [[ -z "$CLERK_PUBLISHABLE_KEY" ]]; do
+        read -p "Enter your Clerk Publishable Key (starts with pk_): " CLERK_PUBLISHABLE_KEY
+        if [[ -z "$CLERK_PUBLISHABLE_KEY" ]]; then
+            echo -e "${RED}❌ Clerk Publishable Key cannot be empty. Please try again.${NC}"
+        elif [[ ! "$CLERK_PUBLISHABLE_KEY" =~ ^pk_ ]]; then
+            echo -e "${RED}❌ Publishable Key should start with 'pk_'. Please check and try again.${NC}"
+            CLERK_PUBLISHABLE_KEY=""
+        else
+            echo -e "${GREEN}✅ Clerk Publishable Key received${NC}"
+        fi
+    done
+    
+    # Collect Clerk Secret Key
+    while [[ -z "$CLERK_SECRET_KEY" ]]; do
+        read -p "Enter your Clerk Secret Key (starts with sk_): " CLERK_SECRET_KEY
+        if [[ -z "$CLERK_SECRET_KEY" ]]; then
+            echo -e "${RED}❌ Clerk Secret Key cannot be empty. Please try again.${NC}"
+        elif [[ ! "$CLERK_SECRET_KEY" =~ ^sk_ ]]; then
+            echo -e "${RED}❌ Secret Key should start with 'sk_'. Please check and try again.${NC}"
+            CLERK_SECRET_KEY=""
+        else
+            echo -e "${GREEN}✅ Clerk Secret Key received${NC}"
+        fi
+    done
+    
+    echo ""
+    echo -e "${GREEN}🎉 All API keys collected successfully!${NC}"
+    echo ""
+}
+
+# Function to check if a port is in use
+check_port() {
+    local port=$1
+    if command -v lsof &> /dev/null; then
+        lsof -ti:$port &> /dev/null
+    elif command -v netstat &> /dev/null; then
+        netstat -tln 2>/dev/null | grep ":$port " &> /dev/null
+    elif command -v ss &> /dev/null; then
+        ss -tln 2>/dev/null | grep ":$port " &> /dev/null
+    else
+        # Fallback: try to connect to the port
+        if command -v nc &> /dev/null; then
+            nc -z localhost $port 2>/dev/null
+        elif command -v telnet &> /dev/null; then
+            timeout 1 telnet localhost $port 2>/dev/null | grep "Connected" &> /dev/null
+        else
+            return 1  # Can't check, assume it's free
+        fi
+    fi
+}
+
+# Function to kill process using a specific port
+kill_port() {
+    local port=$1
+    local service_name=$2
+    
+    echo -e "${YELLOW}🔍 Checking if port $port is in use...${NC}"
+    
+    if check_port $port; then
+        echo -e "${YELLOW}⚠️  Port $port is already in use by another process.${NC}"
+        echo -e "${BLUE}🔧 Automatically stopping the process using port $port...${NC}"
+        
+        # Get PID using the port
+        local pid=""
+        if command -v lsof &> /dev/null; then
+            pid=$(lsof -ti:$port)
+        elif command -v netstat &> /dev/null; then
+            if [[ "$OS" == "linux" ]]; then
+                pid=$(netstat -tlnp 2>/dev/null | grep ":$port " | awk '{print $7}' | cut -d'/' -f1)
+            fi
+        elif command -v ss &> /dev/null; then
+            pid=$(ss -tlnp 2>/dev/null | grep ":$port " | sed 's/.*pid=\([0-9]*\).*/\1/' | head -1)
+        fi
+        
+        if [[ -n "$pid" ]] && [[ "$pid" =~ ^[0-9]+$ ]]; then
+            echo -e "${BLUE}🎯 Found process PID: $pid${NC}"
+            
+            # Try graceful shutdown first
+            echo -e "${BLUE}📋 Attempting graceful shutdown...${NC}"
+            kill -TERM $pid 2>/dev/null || true
+            sleep 2
+            
+            # Check if still running
+            if kill -0 $pid 2>/dev/null; then
+                echo -e "${YELLOW}💪 Process still running, forcing shutdown...${NC}"
+                kill -KILL $pid 2>/dev/null || true
+                sleep 1
+            fi
+            
+            # Verify the port is now free
+            if check_port $port; then
+                echo -e "${RED}❌ Failed to free port $port. You may need to manually stop the process.${NC}"
+                return 1
+            else
+                echo -e "${GREEN}✅ Port $port is now free for $service_name${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠️  Could not determine PID for port $port. Trying alternative methods...${NC}"
+            
+            # Platform-specific port killing
+            if [[ "$OS" == "linux" ]] || [[ "$OS" == "macos" ]]; then
+                # Try fuser if available
+                if command -v fuser &> /dev/null; then
+                    echo -e "${BLUE}🔧 Using fuser to kill processes on port $port...${NC}"
+                    fuser -k ${port}/tcp 2>/dev/null || true
+                    sleep 1
+                fi
+            elif [[ "$OS" == "windows" ]]; then
+                # Windows-specific approach
+                if command -v taskkill &> /dev/null; then
+                    echo -e "${BLUE}🔧 Using taskkill to stop processes on port $port...${NC}"
+                    netstat -ano | findstr ":$port" | awk '{print $5}' | xargs -r taskkill /PID /F 2>/dev/null || true
+                fi
+            fi
+            
+            # Final check
+            sleep 1
+            if check_port $port; then
+                echo -e "${RED}❌ Warning: Port $port may still be in use. Proceeding anyway...${NC}"
+            else
+                echo -e "${GREEN}✅ Port $port is now free for $service_name${NC}"
+            fi
+        fi
+    else
+        echo -e "${GREEN}✅ Port $port is available for $service_name${NC}"
+    fi
+}
+
+# Function to ensure ports are available
+ensure_ports_available() {
+    echo -e "${BLUE}🔍 Ensuring required ports are available...${NC}"
+    
+    # Check and free backend port (8000)
+    kill_port 8000 "FastAPI backend"
+    
+    # Check and free frontend port (3000)
+    kill_port 3000 "Next.js frontend"
+    
+    echo -e "${GREEN}✅ All required ports are ready!${NC}"
+    echo ""
+}
+
+# Function to wait for server to start and verify it's responding
+wait_for_server() {
+    local port=$1
+    local service_name=$2
+    local max_attempts=30
+    local attempt=1
+    
+    echo -e "${BLUE}⏳ Waiting for $service_name to start on port $port...${NC}"
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if check_port $port; then
+            # Additional check: try to get a response
+            if command -v curl &> /dev/null; then
+                if curl -s --connect-timeout 2 http://localhost:$port >/dev/null 2>&1; then
+                    echo -e "${GREEN}✅ $service_name is responding on port $port${NC}"
+                    return 0
+                fi
+            elif command -v wget &> /dev/null; then
+                if wget -q --timeout=2 --tries=1 http://localhost:$port -O /dev/null >/dev/null 2>&1; then
+                    echo -e "${GREEN}✅ $service_name is responding on port $port${NC}"
+                    return 0
+                fi
+            else
+                # Just check if port is in use
+                echo -e "${GREEN}✅ $service_name is listening on port $port${NC}"
+                return 0
+            fi
+        fi
+        
+        echo -n "."
+        sleep 1
+        ((attempt++))
+    done
+    
+    echo ""
+    echo -e "${RED}❌ $service_name failed to start properly on port $port after ${max_attempts}s${NC}"
+    return 1
+}
+
+# Function to update backend .env file
+update_backend_env() {
+    echo -e "${BLUE}📝 Configuring backend environment...${NC}"
+    
+    local backend_env="backend/.env"
+    
+    # Create backend directory if it doesn't exist
+    mkdir -p backend
+    
+    # Create or update the .env file
+    cat > "$backend_env" << EOF
+# Gemini API key (get from https://aistudio.google.com/app/apikey)
+# ⚠️ IMPORTANT: Use PERSONAL Gmail account, NOT ASU email!
+GOOGLE_API_KEY=$GEMINI_API_KEY
+
+# Language model configuration
+LC_MODEL=gemini-2.0-flash-lite
+
+# Timezone
+TZ=America/Phoenix
+EOF
+    
+    echo -e "${GREEN}✅ Backend environment configured: $backend_env${NC}"
+}
+
+# Function to update frontend .env.local file
+update_frontend_env() {
+    echo -e "${BLUE}📝 Configuring frontend environment...${NC}"
+    
+    local frontend_env="frontend/.env.local"
+    
+    # Create frontend directory if it doesn't exist
+    mkdir -p frontend
+    
+    # Create or update the .env.local file
+    cat > "$frontend_env" << EOF
+# Clerk Configuration
+# ⚠️ IMPORTANT: Use PERSONAL email account for Clerk, NOT ASU email!
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY
+CLERK_SECRET_KEY=$CLERK_SECRET_KEY
+
+# Clerk will use default hosted pages for authentication
+# After sign-in/sign-up, users will be redirected to the home page
+NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/
+NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/
+
+# Auto-configured by start-enhanced.sh script
+# If you need to update these keys, either:
+# 1. Run the start-enhanced.sh script again, or
+# 2. Manually update the keys above
+EOF
+    
+    echo -e "${GREEN}✅ Frontend environment configured: $frontend_env${NC}"
+}
 
 # Detect operating system
 detect_os() {
@@ -253,6 +606,9 @@ start_servers() {
     echo -e "${PURPLE}🚀 Starting MindSync AI servers...${NC}"
     echo "================================"
     
+    # Ensure ports are available before starting
+    ensure_ports_available
+    
     # Determine Python command
     PYTHON_CMD="python3"
     if ! command -v python3 &> /dev/null; then
@@ -267,15 +623,17 @@ start_servers() {
     BACKEND_PID=$!
     cd ..
     
-    # Wait for backend to start
-    sleep 3
-    
-    # Check if backend started successfully
-    if ps -p $BACKEND_PID > /dev/null 2>&1; then
+    # Wait for backend to start and verify
+    if wait_for_server 8000 "FastAPI backend"; then
         echo -e "${GREEN}✅ Backend server started successfully!${NC}"
     else
         echo -e "${RED}❌ Failed to start backend server${NC}"
-        echo -e "${YELLOW}💡 Backend might be starting slowly. Check port 8000...${NC}"
+        if ps -p $BACKEND_PID > /dev/null 2>&1; then
+            echo -e "${YELLOW}💡 Backend process is running but not responding. Check for startup errors.${NC}"
+        else
+            echo -e "${RED}💡 Backend process exited. Check for configuration errors.${NC}"
+        fi
+        echo -e "${BLUE}� Try checking: http://localhost:8000 manually${NC}"
     fi
     
     # Start frontend server
@@ -286,15 +644,17 @@ start_servers() {
     FRONTEND_PID=$!
     cd ..
     
-    # Wait for frontend to start
-    sleep 5
-    
-    # Check if frontend started successfully
-    if ps -p $FRONTEND_PID > /dev/null 2>&1; then
+    # Wait for frontend to start and verify
+    if wait_for_server 3000 "Next.js frontend"; then
         echo -e "${GREEN}✅ Frontend server started successfully!${NC}"
     else
         echo -e "${RED}❌ Failed to start frontend server${NC}"
-        echo -e "${YELLOW}💡 Frontend might be starting slowly. Check port 3000...${NC}"
+        if ps -p $FRONTEND_PID > /dev/null 2>&1; then
+            echo -e "${YELLOW}💡 Frontend process is running but not responding. It might still be starting up.${NC}"
+        else
+            echo -e "${RED}💡 Frontend process exited. Check for configuration errors.${NC}"
+        fi
+        echo -e "${BLUE}🔧 Try checking: http://localhost:3000 manually${NC}"
     fi
     
     echo ""
@@ -330,6 +690,9 @@ cleanup() {
 
 # Main execution
 main() {
+    # Parse command line arguments first
+    parse_arguments "$@"
+    
     # Setup trap for cleanup
     trap cleanup INT TERM
     
@@ -345,7 +708,15 @@ main() {
     install_nodejs
     
     echo -e "${BLUE}⚙️  Setting up project...${NC}"
-    setup_env_file
+    
+    # Collect API keys interactively
+    collect_api_keys
+    
+    # Update environment files with collected keys
+    update_backend_env
+    update_frontend_env
+    
+    # Install dependencies
     install_python_deps
     install_node_deps
     

@@ -1,15 +1,35 @@
 'use client';
 
-import { DayPlan, DailySummary, Block } from '@/lib/types';
+import { useState } from 'react';
+import { DayPlan, DailySummary, Block, EnergyProfile } from '@/lib/types';
 import { format } from 'date-fns';
+import { motion } from 'framer-motion';
+import { Clock, Target, Zap, TrendingUp, CheckCircle, Calendar, Timer, Star, Save, BookmarkPlus } from 'lucide-react';
+import { scheduleStorage } from '@/lib/auth';
+import { useUser } from '@clerk/nextjs';
+import FeedbackChat from './FeedbackChat';
 
 interface ScheduleDisplayProps {
   plan: DayPlan;
   summary: DailySummary;
+  energyProfile?: EnergyProfile;
   onStartOver: () => void;
+  onScheduleUpdate?: (updatedPlan: DayPlan) => void;
+  onProfileUpdate?: (updatedProfile: EnergyProfile) => void;
 }
 
-export default function ScheduleDisplay({ plan, summary, onStartOver }: ScheduleDisplayProps) {
+export default function ScheduleDisplay({ 
+  plan, 
+  summary, 
+  energyProfile = 'balanced', 
+  onStartOver, 
+  onScheduleUpdate, 
+  onProfileUpdate 
+}: ScheduleDisplayProps) {
+  const { user } = useUser();
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  
   const formatTime = (date: Date) => {
     return format(new Date(date), 'HH:mm');
   };
@@ -44,121 +64,364 @@ export default function ScheduleDisplay({ plan, summary, onStartOver }: Schedule
     return { color: 'text-red-600', label: 'Poor' };
   };
 
+  const handleSave = async () => {
+    if (!user) {
+      alert('Please sign in to save schedules');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const scheduleName = prompt('Enter a name for this schedule:');
+      if (scheduleName) {
+        scheduleStorage.save({
+          name: scheduleName.trim(),
+          date: plan.date instanceof Date ? plan.date.toISOString() : plan.date,
+          plan,
+          summary,
+        });
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
+      }
+    } catch (error) {
+      console.error('Error saving schedule:', error);
+      alert('Error saving schedule. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const alignmentInfo = getAlignmentScore();
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
+    <motion.div 
+      className="max-w-4xl mx-auto p-6 space-y-6"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+    >
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-lg border shadow-sm">
-          <h3 className="text-sm font-medium text-gray-600">Energy Alignment</h3>
-          <div className="mt-2 flex items-baseline">
-            <span className={`text-2xl font-bold ${alignmentInfo.color}`}>
+      <motion.div 
+        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.1 }}
+      >
+        <motion.div 
+          className="bg-white p-6 rounded-xl border shadow-sm hover:shadow-lg transition-all duration-300 group"
+          whileHover={{ y: -5, scale: 1.02 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-gray-600">Energy Alignment</h3>
+            <Zap className="w-5 h-5 text-blue-500 group-hover:text-blue-600 transition-colors" />
+          </div>
+          <div className="mt-3 flex items-baseline">
+            <motion.span 
+              className={`text-3xl font-bold ${alignmentInfo.color}`}
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", delay: 0.3 }}
+            >
               {Math.round(summary.energy_alignment * 100)}%
-            </span>
+            </motion.span>
             <span className={`ml-2 text-sm ${alignmentInfo.color}`}>
               {alignmentInfo.label}
             </span>
           </div>
-        </div>
+          <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
+            <motion.div 
+              className={`h-2 rounded-full ${
+                summary.energy_alignment >= 0.8 ? 'bg-green-500' :
+                summary.energy_alignment >= 0.6 ? 'bg-yellow-500' :
+                summary.energy_alignment >= 0.4 ? 'bg-orange-500' : 'bg-red-500'
+              }`}
+              initial={{ width: 0 }}
+              animate={{ width: `${summary.energy_alignment * 100}%` }}
+              transition={{ duration: 1, delay: 0.5 }}
+            />
+          </div>
+        </motion.div>
 
-        <div className="bg-white p-4 rounded-lg border shadow-sm">
-          <h3 className="text-sm font-medium text-gray-600">Total Focus Time</h3>
-          <div className="mt-2">
-            <span className="text-2xl font-bold text-gray-900">
+        <motion.div 
+          className="bg-white p-6 rounded-xl border shadow-sm hover:shadow-lg transition-all duration-300 group"
+          whileHover={{ y: -5, scale: 1.02 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-gray-600">Total Focus Time</h3>
+            <Timer className="w-5 h-5 text-purple-500 group-hover:text-purple-600 transition-colors" />
+          </div>
+          <div className="mt-3">
+            <motion.span 
+              className="text-3xl font-bold text-gray-900"
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", delay: 0.4 }}
+            >
               {Math.round(summary.flow_minutes / 60)}h {summary.flow_minutes % 60}m
-            </span>
+            </motion.span>
           </div>
-        </div>
+        </motion.div>
 
-        <div className="bg-white p-4 rounded-lg border shadow-sm">
-          <h3 className="text-sm font-medium text-gray-600">Scheduled Tasks</h3>
-          <div className="mt-2">
-            <span className="text-2xl font-bold text-gray-900">
-              {plan.blocks.length}
-            </span>
+        <motion.div 
+          className="bg-white p-6 rounded-xl border shadow-sm hover:shadow-lg transition-all duration-300 group"
+          whileHover={{ y: -5, scale: 1.02 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+        >
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-gray-600">Scheduled Tasks</h3>
+            <CheckCircle className="w-5 h-5 text-green-500 group-hover:text-green-600 transition-colors" />
           </div>
-        </div>
-      </div>
+          <div className="mt-3">
+            <motion.span 
+              className="text-3xl font-bold text-gray-900"
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", delay: 0.5 }}
+            >
+              {plan.blocks.length}
+            </motion.span>
+          </div>
+        </motion.div>
+      </motion.div>
 
       {/* Schedule Timeline */}
-      <div className="bg-white rounded-lg border shadow-sm">
-        <div className="p-4 border-b">
-          <h2 className="text-xl font-semibold text-gray-900">Your Schedule for {format(new Date(plan.date), 'EEEE, MMMM d')}</h2>
+      <motion.div 
+        className="bg-white rounded-xl border shadow-sm overflow-hidden"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+      >
+        <div className="p-6 border-b bg-gradient-to-r from-blue-50 to-purple-50">
+          <div className="flex items-center space-x-3">
+            <Calendar className="w-6 h-6 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900">
+              Your Schedule for {format(new Date(plan.date), 'EEEE, MMMM d')}
+            </h2>
+          </div>
         </div>
 
-        <div className="p-4">
+        <div className="p-6">
           {plan.blocks.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              No tasks scheduled for this day.
-            </div>
+            <motion.div 
+              className="text-center py-12 text-gray-500"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3 }}
+            >
+              <Calendar className="w-16 h-16 mx-auto text-gray-300 mb-4" />
+              <p className="text-lg">No tasks scheduled for this day.</p>
+              <p className="text-sm mt-2">Create a new schedule to get started!</p>
+            </motion.div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4 relative">
+              {/* Timeline line */}
+              <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-gradient-to-b from-blue-200 via-purple-200 to-pink-200"></div>
+              
               {plan.blocks.map((block: Block, index: number) => (
-                <div key={index} className={`flex items-center p-3 rounded-lg border-l-4 ${getEffortColor(block.task_title)}`}>
-                  <div className="flex-1">
+                <motion.div 
+                  key={index} 
+                  className={`relative flex items-center p-4 rounded-xl border-l-4 ${getEffortColor(block.task_title)} hover:shadow-md transition-all duration-300 group`}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ 
+                    duration: 0.4, 
+                    delay: 0.3 + (index * 0.1),
+                    type: "spring", 
+                    stiffness: 100 
+                  }}
+                  whileHover={{ x: 5, scale: 1.02 }}
+                >
+                  {/* Timeline dot */}
+                  <motion.div 
+                    className="absolute left-[-29px] w-4 h-4 bg-blue-500 rounded-full border-2 border-white shadow-sm z-10"
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ delay: 0.5 + (index * 0.1), type: "spring" }}
+                    whileHover={{ scale: 1.2 }}
+                  />
+                  
+                  <div className="flex-1 ml-4">
                     <div className="flex items-center justify-between">
-                      <h4 className="font-medium">{block.task_title}</h4>
-                      <span className="text-sm font-medium">
-                        {formatDuration(block.start, block.end)}
-                      </span>
+                      <h4 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
+                        {block.task_title}
+                      </h4>
+                      <motion.div 
+                        className="flex items-center space-x-2"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.6 + (index * 0.1) }}
+                      >
+                        <span className="text-sm font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded-md">
+                          {formatDuration(block.start, block.end)}
+                        </span>
+                        <Clock className="w-4 h-4 text-gray-400" />
+                      </motion.div>
                     </div>
-                    <p className="text-sm opacity-75 mt-1">
-                      {formatTime(block.start)} - {formatTime(block.end)}
-                    </p>
+                    <motion.p 
+                      className="text-sm text-gray-600 mt-2 flex items-center space-x-2"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.7 + (index * 0.1) }}
+                    >
+                      <span>
+                        {formatTime(block.start)} - {formatTime(block.end)}
+                      </span>
+                    </motion.p>
                   </div>
-                </div>
+                </motion.div>
               ))}
             </div>
           )}
         </div>
-      </div>
+      </motion.div>
 
       {/* Suggestions */}
       {summary.suggestions.length > 0 && (
-        <div className="bg-blue-50 rounded-lg border border-blue-200">
-          <div className="p-4">
-            <h3 className="text-lg font-medium text-blue-900 mb-3">💡 Optimization Tips</h3>
-            <ul className="space-y-2">
+        <motion.div 
+          className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 overflow-hidden"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.4 }}
+        >
+          <div className="p-6">
+            <motion.div 
+              className="flex items-center space-x-3 mb-4"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.5 }}
+            >
+              <TrendingUp className="w-6 h-6 text-blue-600" />
+              <h3 className="text-lg font-semibold text-blue-900">💡 Optimization Tips</h3>
+            </motion.div>
+            <ul className="space-y-3">
               {summary.suggestions.map((suggestion, index) => (
-                <li key={index} className="text-blue-800 flex items-start">
-                  <span className="w-2 h-2 bg-blue-400 rounded-full mt-2 mr-3 flex-shrink-0"></span>
-                  <span>{suggestion}</span>
-                </li>
+                <motion.li 
+                  key={index} 
+                  className="text-blue-800 flex items-start group"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.6 + (index * 0.1) }}
+                >
+                  <motion.div
+                    className="w-2 h-2 bg-blue-400 rounded-full mt-2 mr-3 flex-shrink-0 group-hover:bg-blue-600 transition-colors"
+                    whileHover={{ scale: 1.5 }}
+                  />
+                  <span className="leading-relaxed">{suggestion}</span>
+                </motion.li>
               ))}
             </ul>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* Legend */}
-      <div className="bg-gray-50 rounded-lg p-4">
-        <h4 className="text-sm font-medium text-gray-700 mb-3">Task Effort Levels</h4>
-        <div className="flex flex-wrap gap-4 text-sm">
-          <div className="flex items-center">
-            <div className="w-4 h-4 bg-red-100 border border-red-300 rounded mr-2"></div>
-            <span>High effort (deep work)</span>
-          </div>
-          <div className="flex items-center">
-            <div className="w-4 h-4 bg-yellow-100 border border-yellow-300 rounded mr-2"></div>
-            <span>Medium effort</span>
-          </div>
-          <div className="flex items-center">
-            <div className="w-4 h-4 bg-green-100 border border-green-300 rounded mr-2"></div>
-            <span>Low effort (admin)</span>
-          </div>
+      <motion.div 
+        className="bg-gray-50 rounded-xl p-6 border"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.5 }}
+      >
+        <div className="flex items-center space-x-2 mb-4">
+          <Star className="w-5 h-5 text-gray-600" />
+          <h4 className="text-sm font-semibold text-gray-700">Task Effort Levels</h4>
         </div>
-      </div>
+        <div className="flex flex-wrap gap-6 text-sm">
+          <motion.div 
+            className="flex items-center group cursor-help"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6 }}
+            whileHover={{ scale: 1.05 }}
+          >
+            <div className="w-4 h-4 bg-red-100 border border-red-300 rounded mr-3 group-hover:shadow-md transition-shadow"></div>
+            <span className="text-gray-700 font-medium">High effort (deep work)</span>
+          </motion.div>
+          <motion.div 
+            className="flex items-center group cursor-help"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.7 }}
+            whileHover={{ scale: 1.05 }}
+          >
+            <div className="w-4 h-4 bg-yellow-100 border border-yellow-300 rounded mr-3 group-hover:shadow-md transition-shadow"></div>
+            <span className="text-gray-700 font-medium">Medium effort</span>
+          </motion.div>
+          <motion.div 
+            className="flex items-center group cursor-help"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.8 }}
+            whileHover={{ scale: 1.05 }}
+          >
+            <div className="w-4 h-4 bg-green-100 border border-green-300 rounded mr-3 group-hover:shadow-md transition-shadow"></div>
+            <span className="text-gray-700 font-medium">Low effort (admin)</span>
+          </motion.div>
+        </div>
+      </motion.div>
 
       {/* Actions */}
-      <div className="flex justify-center">
-        <button
+      <motion.div 
+        className="flex justify-center space-x-4"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.6 }}
+      >
+        {user && (
+          <motion.button
+            onClick={handleSave}
+            disabled={isSaving}
+            className={`px-8 py-4 bg-gradient-to-r text-white rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 transition-all duration-300 shadow-lg hover:shadow-xl ${
+              saveSuccess 
+                ? 'from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 focus:ring-green-500' 
+                : 'from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 focus:ring-blue-500'
+            }`}
+            whileHover={{ scale: 1.05, y: -2 }}
+            whileTap={{ scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 400, damping: 17 }}
+          >
+            <span className="flex items-center space-x-2">
+              {saveSuccess ? (
+                <>
+                  <CheckCircle className="w-5 h-5" />
+                  <span className="font-semibold">Saved!</span>
+                </>
+              ) : (
+                <>
+                  <BookmarkPlus className="w-5 h-5" />
+                  <span className="font-semibold">
+                    {isSaving ? 'Saving...' : 'Save Schedule'}
+                  </span>
+                </>
+              )}
+            </span>
+          </motion.button>
+        )}
+        
+        <motion.button
           onClick={onStartOver}
-          className="px-6 py-3 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+          className="px-8 py-4 bg-gradient-to-r from-gray-600 to-gray-700 text-white rounded-xl hover:from-gray-700 hover:to-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-all duration-300 shadow-lg hover:shadow-xl"
+          whileHover={{ scale: 1.05, y: -2 }}
+          whileTap={{ scale: 0.95 }}
+          transition={{ type: "spring", stiffness: 400, damping: 17 }}
         >
-          Create New Schedule
-        </button>
-      </div>
-    </div>
+          <span className="flex items-center space-x-2">
+            <Target className="w-5 h-5" />
+            <span className="font-semibold">Create New Schedule</span>
+          </span>
+        </motion.button>
+      </motion.div>
+
+      {/* Feedback Chat - Only show if user is logged in */}
+      {user && (
+        <FeedbackChat
+          schedule={plan}
+          energyProfile={energyProfile}
+          onScheduleUpdate={onScheduleUpdate}
+          onProfileUpdate={onProfileUpdate}
+        />
+      )}
+    </motion.div>
   );
 }

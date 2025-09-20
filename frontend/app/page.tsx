@@ -5,6 +5,7 @@ import { EnergyProfile, DayPlan, DailySummary, QuizResult } from '@/lib/types';
 import EnergyQuiz from '@/components/EnergyQuiz';
 import TaskChat from '@/components/TaskChat';
 import ScheduleDisplay from '@/components/ScheduleDisplay';
+import Header from '@/components/Header';
 
 export default function Home() {
   const [currentStep, setCurrentStep] = useState<'quiz' | 'chat' | 'schedule'>('quiz');
@@ -25,6 +26,16 @@ export default function Home() {
     setCurrentStep('schedule');
   };
 
+  const handleScheduleUpdate = (updatedPlan: DayPlan) => {
+    setDayPlan(updatedPlan);
+    // Optionally save to localStorage here
+  };
+
+  const handleProfileUpdate = (updatedProfile: EnergyProfile) => {
+    setEnergyProfile(updatedProfile);
+    // Optionally save to localStorage here
+  };
+
   const handleStartOver = () => {
     setCurrentStep('quiz');
     setEnergyProfile(null);
@@ -35,17 +46,8 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
+      <Header />
       <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <header className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-800 dark:text-white mb-2">
-            MindSync AI
-          </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-300">
-            Intelligent task scheduling that adapts to your energy patterns
-          </p>
-        </header>
-
         {/* Progress indicator */}
         <div className="flex justify-center mb-8">
           <div className="flex items-center space-x-4">
@@ -128,7 +130,14 @@ export default function Home() {
                     Start Over
                   </button>
                 </div>
-                <ScheduleDisplay plan={dayPlan} summary={dailySummary} onStartOver={handleStartOver} />
+                <ScheduleDisplay 
+                  plan={dayPlan} 
+                  summary={dailySummary} 
+                  energyProfile={energyProfile || 'balanced'} 
+                  onStartOver={handleStartOver}
+                  onScheduleUpdate={handleScheduleUpdate}
+                  onProfileUpdate={handleProfileUpdate}
+                />
               </div>
             </div>
           )}
