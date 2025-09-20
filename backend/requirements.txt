@@ -1,6 +1,6 @@
 # requirements.txt
 
-
+python-dateutil
 langchain>=0.2.12
 langgraph>=0.2.4
 langchain-google-genai>=0.1.0
