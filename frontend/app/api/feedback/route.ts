@@ -8,10 +8,15 @@ interface FeedbackRequest {
 }
 
 export async function POST(request: NextRequest) {
-  let requestData: FeedbackRequest;
+  let requestData: FeedbackRequest | null = null;
   
   try {
     requestData = await request.json();
+    
+    if (!requestData) {
+      throw new Error('Invalid request data');
+    }
+
     const { message, schedule, energyProfile, conversationHistory } = requestData;
 
     // Prepare the context for the AI
@@ -48,8 +53,14 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error in feedback API:', error);
     
-    // Fallback response if backend is unavailable
-    const fallbackResponse = generateFallbackResponse(requestData || { message: 'I understand your feedback.', schedule: null, energyProfile: 'balanced', conversationHistory: [] });
+    // Fallback response if backend is unavailable or request parsing failed
+    const fallbackData = requestData || { 
+      message: 'I understand your feedback.', 
+      schedule: null, 
+      energyProfile: 'balanced', 
+      conversationHistory: [] 
+    };
+    const fallbackResponse = generateFallbackResponse(fallbackData);
     
     return NextResponse.json(fallbackResponse);
   }
