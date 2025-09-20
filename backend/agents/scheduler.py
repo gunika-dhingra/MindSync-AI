@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, date, time
 from typing import List, Tuple, Dict, Optional
 from core.models import Task, DayPlan, Block
+import logging
+
+logger = logging.getLogger("MindSync-API")
 
 Slot = Tuple[datetime, datetime]
 

@@ -48,13 +48,16 @@ class TaskDraft(BaseModel):
 _BASE_RULES = (
     "Return ONLY the fields defined by the schema. "
     "Convert durations like '2h', '1.5 hours', '45m' to total minutes. "
-    "If explicit time windows appear (e.g., '14:00–14:30', '2pm-3pm', 'today 10:30', 'Fri 11am'), "
-    "set fixed_start/fixed_end accordingly. "
-    "If only a start time is given (e.g., 'at 14:00'), set fixed_start to that time and "
-    "fixed_end = fixed_start + est_minutes. "
+    "IMPORTANT: Only set fixed_start/fixed_end for tasks with EXPLICIT time constraints like:"
+    "- 'meeting at 2pm', 'call at 10:30am', 'appointment from 9-10am', 'lunch 12:00-13:00'"
+    "- Tasks that specify 'at [time]', 'from [time] to [time]', '[time] to [time]'"
+    "DO NOT set fixed_start/fixed_end for:"
+    "- Tasks with only durations ('45 minutes', '2 hours')"
+    "- Tasks with only deadlines ('due by 5pm', 'due Friday')"
+    "- General tasks without specific scheduling constraints"
     "Treat any phrase starting with 'due' (e.g., 'due today 4pm', 'due Fri 17:00') "
     "as a DEADLINE (deadline field), NOT as a fixed start/end. Never set fixed_start/fixed_end from 'due'. "
-
+    "Leave fixed_start and fixed_end as null unless there's an explicit scheduling constraint."
 )
 
 
@@ -142,14 +145,33 @@ def _normalize_rel_word(s: Optional[str], default_hour=17) -> datetime | None:
 def _finalize_task(raw_text: str, d: TaskDraft, plan_date: date | None = None) -> Task:
     base = _infer_base_from_text(raw_text, plan_date)
 
-    fs_dt = _normalize_rel_word(d.fixed_start)
-    fe_dt = _normalize_rel_word(d.fixed_end)
-    if fs_dt is None and fe_dt is None:
-        fs_dt, fe_dt = _parse_time_window_from_text(raw_text, base)
-    if fs_dt is None and fe_dt is None:
-        fs_dt = _parse_single_time_from_text(raw_text, base)
-    if fs_dt is not None and fe_dt is None:
-        fe_dt = fs_dt + timedelta(minutes=d.est_minutes or 30)
+    # Additional safety check: only allow fixed times if text has explicit scheduling words
+    tlow = raw_text.lower()
+    
+    # Strong indicators that this should have fixed timing
+    has_explicit_scheduling = any(pattern in tlow for pattern in [
+        "meeting at", "call at", "appointment at", 
+        "lunch at", "break at", "conference at"
+    ]) or (" at " in tlow and "due" not in tlow)
+    
+    # Only process fixed times if we have explicit scheduling
+    if has_explicit_scheduling:
+        fs_dt = _normalize_rel_word(d.fixed_start)
+        fe_dt = _normalize_rel_word(d.fixed_end)
+        
+        # If LLM didn't set fixed times, try regex parsing
+        if fs_dt is None and fe_dt is None:
+            fs_dt, fe_dt = _parse_time_window_from_text(raw_text, base)
+            
+            # Try single time parsing
+            if fs_dt is None and fe_dt is None:
+                fs_dt = _parse_single_time_from_text(raw_text, base)
+                
+        if fs_dt is not None and fe_dt is None:
+            fe_dt = fs_dt + timedelta(minutes=d.est_minutes or 30)
+    else:
+        # No explicit scheduling - clear any fixed times
+        fs_dt, fe_dt = None, None
 
     dl_dt = _normalize_rel_word(d.deadline)
     if dl_dt is None and d.deadline:
@@ -161,7 +183,6 @@ def _finalize_task(raw_text: str, d: TaskDraft, plan_date: date | None = None) -
     if extra_due:
         dl_dt = extra_due if (dl_dt is None or extra_due < dl_dt) else dl_dt
 
-        tlow = raw_text.lower()
         has_window = _TIME_RE.search(raw_text) is not None
         has_explicit_start_words = any(w in tlow for w in (" at ", " start ", " from "))
         # if there is no explicit window and no 'at/start/from', any fixed_* likely came from 'due' → drop them
