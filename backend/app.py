@@ -5,7 +5,7 @@ import os
 import json
 import time
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Optional, Literal
 
 from dotenv import load_dotenv
@@ -299,22 +299,41 @@ Respond in a conversational, helpful tone. If the user mentions tasks being too 
         
         ai_response = response.content or "I understand your feedback. Let me help you adjust your schedule."
         
-        # Simple pattern matching to determine if updates are needed
+        # Analyze feedback to determine what changes to make
         user_lower = user_message.lower()
-        has_updates = any(keyword in user_lower for keyword in [
-            'too hard', 'too easy', 'difficult', 'simple', 'add', 'remove', 
+        
+        # Check if schedule updates are needed
+        needs_schedule_update = any(keyword in user_lower for keyword in [
+            'too busy', 'overwhelmed', 'stressed', 'too much', 'reduce', 'remove',
             'change time', 'reschedule', 'earlier', 'later', 'wrong time',
-            'busy', 'stressed', 'stretch', 'breaks', 'more time'
+            'break', 'space', 'gap', 'longer', 'shorter'
         ])
+        
+        # Check if profile update is needed
+        needs_profile_update = any(keyword in user_lower for keyword in [
+            'morning person', 'night owl', 'early bird', 'late', 'energy',
+            'tired', 'alert', 'focused', 'productive'
+        ])
+        
+        updated_schedule = None
+        updated_profile = None
+        
+        # Generate actual schedule updates if needed
+        if needs_schedule_update and current_schedule:
+            updated_schedule = generate_schedule_update(user_message, current_schedule)
+            
+        # Generate profile updates if needed  
+        if needs_profile_update:
+            updated_profile = generate_profile_update(user_message, current_profile)
         
         # Generate suggestions based on feedback content
         suggestions = generate_suggestions(user_message, current_profile)
         
         return {
             "response": ai_response or "Thank you for your feedback! I'm here to help you improve your schedule.",
-            "hasUpdates": has_updates,
-            "updatedSchedule": None,  # Would need more complex logic to generate actual updates
-            "updatedProfile": None,   # Could adjust profile based on feedback patterns
+            "hasUpdates": needs_schedule_update or needs_profile_update,
+            "updatedSchedule": updated_schedule,
+            "updatedProfile": updated_profile,
             "suggestions": suggestions
         }
         
@@ -322,6 +341,111 @@ Respond in a conversational, helpful tone. If the user mentions tasks being too 
         logger.error(f"❌ AI analysis error: {e}")
         # Fallback to simple pattern matching
         return generate_fallback_feedback_response(user_message)
+
+
+def generate_schedule_update(user_message: str, current_schedule: dict) -> dict:
+    """Generate an updated schedule based on user feedback."""
+    try:
+        # Parse the current schedule
+        blocks = current_schedule.get('blocks', [])
+        if not blocks:
+            return None
+            
+        user_lower = user_message.lower()
+        updated_blocks = []
+        
+        for block in blocks:
+            start_time = datetime.fromisoformat(block['start'])
+            end_time = datetime.fromisoformat(block['end'])
+            duration_minutes = int((end_time - start_time).total_seconds() / 60)
+            
+            # Apply modifications based on feedback
+            if 'too busy' in user_lower or 'overwhelmed' in user_lower:
+                # Reduce task duration by 25%
+                new_duration = max(15, int(duration_minutes * 0.75))
+                new_end = start_time + timedelta(minutes=new_duration)
+                
+                updated_blocks.append({
+                    "task_title": block['task_title'],
+                    "start": start_time.isoformat(),
+                    "end": new_end.isoformat()
+                })
+                
+            elif 'more time' in user_lower or 'longer' in user_lower:
+                # Increase task duration by 25%
+                new_duration = int(duration_minutes * 1.25)
+                new_end = start_time + timedelta(minutes=new_duration)
+                
+                updated_blocks.append({
+                    "task_title": block['task_title'],
+                    "start": start_time.isoformat(),
+                    "end": new_end.isoformat()
+                })
+                
+            elif 'earlier' in user_lower:
+                # Move tasks 1 hour earlier
+                new_start = start_time - timedelta(hours=1)
+                new_end = end_time - timedelta(hours=1)
+                
+                # Don't move before 8am
+                if new_start.hour >= 8:
+                    updated_blocks.append({
+                        "task_title": block['task_title'],
+                        "start": new_start.isoformat(),
+                        "end": new_end.isoformat()
+                    })
+                else:
+                    updated_blocks.append(block)
+                    
+            elif 'later' in user_lower:
+                # Move tasks 1 hour later
+                new_start = start_time + timedelta(hours=1)
+                new_end = end_time + timedelta(hours=1)
+                
+                # Don't move after 6pm
+                if new_end.hour <= 18:
+                    updated_blocks.append({
+                        "task_title": block['task_title'],
+                        "start": new_start.isoformat(),
+                        "end": new_end.isoformat()
+                    })
+                else:
+                    updated_blocks.append(block)
+                    
+            elif 'break' in user_lower or 'space' in user_lower:
+                # Add 15-minute gaps between tasks
+                updated_blocks.append({
+                    "task_title": block['task_title'],
+                    "start": start_time.isoformat(),
+                    "end": (end_time - timedelta(minutes=15)).isoformat()
+                })
+                
+            else:
+                # Keep original block
+                updated_blocks.append(block)
+        
+        return {
+            "date": current_schedule.get('date'),
+            "blocks": updated_blocks
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Schedule update error: {e}")
+        return None
+
+
+def generate_profile_update(user_message: str, current_profile: str) -> str:
+    """Generate an updated energy profile based on user feedback."""
+    user_lower = user_message.lower()
+    
+    if any(word in user_lower for word in ['morning', 'early', 'dawn', 'sunrise']):
+        return 'morning_lark'
+    elif any(word in user_lower for word in ['night', 'evening', 'late', 'owl']):
+        return 'night_owl'
+    elif any(word in user_lower for word in ['balanced', 'flexible', 'average']):
+        return 'balanced'
+    else:
+        return current_profile  # Keep current if no clear indication
 
 
 def generate_suggestions(user_message: str, current_profile: str) -> List[str]:
